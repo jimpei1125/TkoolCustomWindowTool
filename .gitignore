@@ -1,0 +1,6 @@
+node_modules/
+dist/
+scmd.local.json
+scmd.config.json
+scmd_backup/
+*.log

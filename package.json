@@ -1,0 +1,21 @@
+{
+  "name": "scmdesigner",
+  "version": "0.0.1",
+  "private": true,
+  "description": "SceneCustomMenu.js のパラメータをテストプレイ中に視覚編集する開発専用 RPGツクールMZ プラグイン",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "test": "vitest run",
+    "deploy": "node scripts/deploy.mjs"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "esbuild": "^0.23.1",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}
