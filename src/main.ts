@@ -1,12 +1,16 @@
-// SCMDesigner エントリポイント（Phase 0: 調査 / PoC）。
+// SCMDesigner エントリポイント（Phase 0: 調査/PoC、Phase 1: インスペクタ（読み取り専用））。
 //
-// このファイルに実装済みなのは Phase 0 の完了条件のうち以下の PoC のみ:
-//  - 起動キーによるオーバーレイの表示/非表示切り替え
-//  - 編集中のゲーム入力遮断（Input / TouchInput の早期 return 方式）
-// GUI 編集・保存等は未実装（Phase 1 以降でフェーズごとに追加する）。
+// Phase 0: 起動キーによるオーバーレイ表示切替、編集中のゲーム入力遮断PoC
+// Phase 1: カスタムメニューシーン表示中のみ、全ウィンドウの選択枠+Idラベル表示、
+//          クリック/ツリーでの選択、プロパティの読み取り表示
+// GUI 編集・保存等は未実装（Phase 2 以降でフェーズごとに追加する）。
 //
 // CLAUDE.md「絶対に守るルール」6: すべての初期化は
 // Utils.isOptionValid('test') && Utils.isNwjs() ガードの内側で行う。
+
+import { createEditorState, selectWindow } from './editor/state';
+import { InspectorOverlay } from './gizmo/overlay';
+import { InspectorPanel } from './ui/panel';
 
 (() => {
   if (!(Utils.isOptionValid('test') && Utils.isNwjs())) return;
@@ -21,6 +25,15 @@
     } catch {
       // PluginCommonBase 未導入などプラグイン順序の問題があってもゲーム自体は落とさない
       return DEFAULT_STARTUP_KEY;
+    }
+  }
+
+  function isCustomSceneSafe(): boolean {
+    try {
+      return typeof SceneManager.isCustomScene === 'function' && SceneManager.isCustomScene();
+    } catch {
+      // SceneCustomMenu 未導入などプラグイン順序の問題があってもゲーム自体は落とさない
+      return false;
     }
   }
 
@@ -40,18 +53,63 @@
     el.style.font = '14px sans-serif';
     el.style.zIndex = '10000';
     el.style.pointerEvents = 'none';
-    el.textContent = `SCMDesigner (Phase 0 PoC) — ${startupKey} で終了`;
     document.body.appendChild(el);
     return el;
   }
 
+  // --- Phase 1: インスペクタ（読み取り専用） ---
+  const editorState = createEditorState();
+  let overlay: InspectorOverlay | null = null;
+  let panel: InspectorPanel | null = null;
+  let rafHandle: number | null = null;
+
+  function handleSelect(id: string): void {
+    selectWindow(editorState, id);
+    panel?.render();
+  }
+
+  function startInspector(): void {
+    if (!overlay) overlay = new InspectorOverlay(editorState, handleSelect);
+    if (!panel) {
+      panel = new InspectorPanel(editorState, handleSelect);
+      document.body.appendChild(panel.el);
+    }
+    overlay.attach();
+    const loop = (): void => {
+      overlay?.refresh();
+      panel?.render();
+      rafHandle = requestAnimationFrame(loop);
+    };
+    loop();
+  }
+
+  function stopInspector(): void {
+    if (rafHandle !== null) {
+      cancelAnimationFrame(rafHandle);
+      rafHandle = null;
+    }
+    overlay?.detach();
+    if (panel) {
+      panel.el.remove();
+      panel = null;
+    }
+  }
+
   function setEditorActive(active: boolean): void {
     editorActive = active;
+    if (!overlayElement) overlayElement = createOverlay();
+
     if (active) {
-      if (!overlayElement) overlayElement = createOverlay();
       overlayElement.style.display = 'block';
-    } else if (overlayElement) {
+      if (isCustomSceneSafe()) {
+        overlayElement.textContent = `SCMDesigner (Phase 1) — ${startupKey} で終了`;
+        startInspector();
+      } else {
+        overlayElement.textContent = `SCMDesigner: カスタムメニューシーン表示中のみ利用できます（${startupKey} で終了）`;
+      }
+    } else {
       overlayElement.style.display = 'none';
+      stopInspector();
     }
   }
 
