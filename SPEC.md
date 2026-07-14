@@ -240,15 +240,44 @@ scm-designer/
 
 **完了条件**: 上記 4 点が動くこと。以降のフェーズはこの結果を SPEC に反映してから着手する。
 
+**実機確認結果（2026 実施）**:
+- 1（ラウンドトリップ）: vitest で確認済み。加えて実 `SceneCustomMenu.js`（1.52.1）ソースを入手し
+  `reference/SceneCustomMenu.js` に保管、struct 定義（Scene/Window/Command/Event/ButtonEvent/
+  AudioSe/Panorama）が実装と完全一致することを確認した
+- 2（オーバーレイ+入力遮断）: 実機（NW.js テストプレイ）で確認済み。F9 での表示切替、編集中の
+  ゲーム入力遮断とも正常動作
+- 3（逆変換）: 実機で確認済み。`setPlacement` の実装（`reference/SceneCustomMenu.js`）を確認した結果、
+  `model/placement.ts` の逆変換ロジックと完全に一致していた
+- 4（シーン再生成方式）: **未確定のまま据え置き**。Phase 2 では代替として「ドラッグ中は実ウィンドウを
+  直接書き換えてプレビューし、保存後はゲーム再起動で確定」という方式を採用し、シーン再生成（pop+
+  callCustomMenu 等）は使わずに Phase 2 の完了条件を満たした。RelativeWindowIdX/Y で連動する他ウィンドウの
+  「保存せずに即座に正しい位置へ再配置」が必要になった時点（ライブ反映の本格対応時）で改めて検討する
+
+**重要な修正（実ソース解析で判明）**:
+- `SceneManager.isCustomScene(id)` は**引数必須**（現在のシーンが指定 Id と一致するかを返す関数）で、
+  引数なしで呼ぶと常に false になる。カスタムシーン判定は `SceneManager._scene instanceof
+  Scene_CustomMenu` を使う
+- シーン特定は `PluginManagerEx.findClassName(scene)` で得た Id と `SceneData.Id` の一致で行う
+  （`SceneManager.findSceneData` 内部実装と同じ方式）。ウィンドウ Id 集合の突き合わせによる方式は
+  採用しなかった
+- gizmo の選択・ドラッグ開始判定は PIXI の `interactive`/`pointerdown` に依存せず、`window` の
+  `mousedown` を受けて自前で矩形の当たり判定を行う方式にした（PIXI 依存だと実機でクリックが
+  反応しない不具合を確認したため）
+- DOM UI（ツリー等）は対象データが変化した場合のみ要素を再構築する。毎フレーム無条件に
+  `innerHTML` で作り直すと、クリック中に要素が差し替わり `click` が成立しないことを実機で確認した
+
 ### Phase 1: インスペクタ（読み取り専用）
 
 - 全ウィンドウの枠 + Id ラベルを gizmo 表示。クリック / ツリーで選択、プロパティを読み取り表示
 - **完了条件**: 自作カスタムシーンで全ウィンドウが正しく選択・閲覧できる
+- **実機確認済み**（2026）。選択枠クリック・ツリークリックとも正常動作
 
 ### Phase 2: 配置編集 + 保存
 
 - 移動 / リサイズ、グリッド、吸着、アンカー提案、ライブ反映、バックアップ付き保存
 - **完了条件**: ドラッグ結果が plugins.js に保存され、**ゲーム再起動後も同一表示**になる
+- **実機確認済み**（2026）。移動・リサイズ・グリッド吸着・保存・バックアップ作成・破棄・
+  ゲーム再起動後の配置維持まで確認。アンカー自動提案ポップアップ（§6.3）は未実装（次項参照）
 
 ### Phase 3: 構造編集
 
@@ -289,3 +318,15 @@ scm-designer/
 - **D4**: 自分専用ツール。日本語のみ、Windows + NW.js 限定。堅牢化より**復旧性（バックアップ）**を優先
 - **D5**: 全パラメータのリッチ UI 化はしない。高頻度項目のみ専用 UI、残りは詳細アコーディオンで網羅
 - **D6**: 対応バージョンは SceneCustomMenu 1.53.4 に固定（プロジェクト同梱版と一致させる）
+- **D7**: カスタムシーン判定は `SceneManager._scene instanceof Scene_CustomMenu` を使う。
+  `SceneManager.isCustomScene(id)` は引数必須で判定対象の Id と現在シーンの一致を見るだけの
+  関数のため、「現在がカスタムシーン一般かどうか」の判定には使えない（実ソース確認済み）
+- **D8**: シーン特定（plugins.js 内のどのパラメータキーが現在のシーンか）は
+  `PluginManagerEx.findClassName(scene)` で得た Id と `SceneData.Id` の一致で行う。
+  `SceneManager.findSceneData` の内部実装と同じ方式に揃えている
+- **D9**: gizmo の選択・ドラッグ開始は PIXI の `interactive`/`pointerdown` に依存しない。
+  `window` の `mousedown` を受けて自前で矩形の当たり判定を行う（実機で PIXI 依存だと
+  クリックが反応しない不具合を確認したため。ドラッグ追跡自体は元々 DOM イベント方式だった）
+- **D10**: DOM UI コンポーネントは、表示対象のデータ集合が変化した場合のみ DOM 要素を
+  再構築する。毎フレーム無条件に `innerHTML` で作り直す実装は、クリック中に要素が
+  差し替わり `click` イベントが成立しない不具合を実機で引き起こした
