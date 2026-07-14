@@ -4,7 +4,7 @@
 // MZ プロジェクトルート（index.html, js/, data/ 等がある場所）と一致する想定。
 // この前提は実機（NW.js テストプレイ）での確認が必要。
 
-import * as path from 'node:path';
+import * as path from 'path';
 
 export function getProjectRoot(): string {
   return process.cwd();

@@ -6,8 +6,10 @@
 //     以外は一切書き換えない（他プラグイン・他シーンのパラメータは
 //     もとの文字列のまま温存する）
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+// NW.js に同梱される Node.js は node: プレフィックス付き require に
+// 対応していないバージョンのことがあるため、bare specifier を使う。
+import * as fs from 'fs';
+import * as path from 'path';
 import { parseStruct, serializeStruct } from '../model/mzformat';
 
 export interface PluginEntry {
