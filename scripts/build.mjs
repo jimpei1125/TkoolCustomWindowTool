@@ -22,6 +22,9 @@ const buildOptions = {
   bundle: true,
   format: 'iife',
   target: 'es2019',
+  // NW.js (Chromium + Node統合環境) 向け。bridge層の node:fs / node:path を
+  // 外部化（require のまま残す）ために node プラットフォームを指定する。
+  platform: 'node',
   banner: { js: loadPluginHeader() },
   sourcemap: false,
   logLevel: 'info',

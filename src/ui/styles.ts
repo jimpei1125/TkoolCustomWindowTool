@@ -52,6 +52,45 @@ export function injectStyles(): void {
       padding: 4px;
       font-style: italic;
     }
+    .scmd-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+    }
+    .scmd-button {
+      background: #2a2a30;
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 3px;
+      padding: 4px 8px;
+      cursor: pointer;
+      font: inherit;
+    }
+    .scmd-button:hover:not(:disabled) {
+      background: #3a3a42;
+    }
+    .scmd-button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+    .scmd-grid-toggle {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: auto;
+      cursor: pointer;
+    }
+    .scmd-status {
+      min-height: 1.4em;
+      padding: 4px 2px;
+      color: #9cff9c;
+      font-size: 11px;
+    }
+    .scmd-status.scmd-status-error {
+      color: #ff9c9c;
+    }
   `;
   document.head.appendChild(style);
 }

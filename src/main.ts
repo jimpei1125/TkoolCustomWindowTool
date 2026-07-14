@@ -1,15 +1,28 @@
-// SCMDesigner エントリポイント（Phase 0: 調査/PoC、Phase 1: インスペクタ（読み取り専用））。
+// SCMDesigner エントリポイント。
 //
 // Phase 0: 起動キーによるオーバーレイ表示切替、編集中のゲーム入力遮断PoC
 // Phase 1: カスタムメニューシーン表示中のみ、全ウィンドウの選択枠+Idラベル表示、
 //          クリック/ツリーでの選択、プロパティの読み取り表示
-// GUI 編集・保存等は未実装（Phase 2 以降でフェーズごとに追加する）。
+// Phase 2: 移動/リサイズ（グリッド・端吸着・ガイド線）、plugins.js からの
+//          シーン読み込み、バックアップ付き保存、外部変更の競合検出
+// 中身/動作タブの編集、Undo/Redo 等は未実装（Phase 3 以降で追加する）。
 //
 // CLAUDE.md「絶対に守るルール」6: すべての初期化は
 // Utils.isOptionValid('test') && Utils.isNwjs() ガードの内側で行う。
 
-import { createEditorState, selectWindow } from './editor/state';
+import { getBackupDir, getPluginsFilePath } from './bridge/projectPath';
+import { loadScmSceneForWindowIds, PluginsFileConflictError, saveScmScene } from './bridge/pluginsFile';
+import {
+  applyLoadedScene,
+  createEditorState,
+  getWindowConfig,
+  markDirty,
+  markSaved,
+  selectWindow,
+} from './editor/state';
 import { InspectorOverlay } from './gizmo/overlay';
+import type { ResolvedRect } from './model/placement';
+import { computeStoredPlacement } from './model/placement';
 import { InspectorPanel } from './ui/panel';
 
 (() => {
@@ -37,6 +50,15 @@ import { InspectorPanel } from './ui/panel';
     }
   }
 
+  function getMainAreaTopSafe(): number {
+    try {
+      const scene = SceneManager._scene as { mainAreaTop?: () => number } | null;
+      return typeof scene?.mainAreaTop === 'function' ? scene.mainAreaTop() : 0;
+    } catch {
+      return 0;
+    }
+  }
+
   const startupKey = readStartupKey();
   let editorActive = false;
   let overlayElement: HTMLDivElement | null = null;
@@ -57,7 +79,7 @@ import { InspectorPanel } from './ui/panel';
     return el;
   }
 
-  // --- Phase 1: インスペクタ（読み取り専用） ---
+  // --- Phase 1/2: インスペクタ + 配置編集 ---
   const editorState = createEditorState();
   let overlay: InspectorOverlay | null = null;
   let panel: InspectorPanel | null = null;
@@ -68,13 +90,119 @@ import { InspectorPanel } from './ui/panel';
     panel?.render();
   }
 
+  function findLiveRect(id: string): ResolvedRect | undefined {
+    const win = editorState.windows.find((w) => w.id === id);
+    return win ? { x: win.x, y: win.y, width: win.width, height: win.height } : undefined;
+  }
+
+  /** ドラッグ確定時: 実座標から保存値を逆算し、編集中の SceneData モデルへ反映する。 */
+  function handleDragCommit(id: string, rect: ResolvedRect): void {
+    const config = getWindowConfig(editorState, id);
+    if (!config) return;
+
+    const originX = (typeof config.originX === 'number' ? config.originX : 0) as 0 | 1 | 2;
+    const relativeIdX = typeof config.RelativeWindowIdX === 'string' ? config.RelativeWindowIdX : '';
+    const relativeIdY = typeof config.RelativeWindowIdY === 'string' ? config.RelativeWindowIdY : '';
+
+    const stored = computeStoredPlacement(
+      { x: rect.x, y: rect.y },
+      {
+        originX,
+        width: rect.width,
+        relativeParentX: relativeIdX ? findLiveRect(relativeIdX) : undefined,
+        relativeParentY: relativeIdY ? findLiveRect(relativeIdY) : undefined,
+        mainAreaTop: getMainAreaTopSafe(),
+      }
+    );
+
+    config.x = stored.x;
+    config.y = stored.y;
+    config.width = rect.width;
+    config.height = rect.height;
+    markDirty(editorState);
+  }
+
+  /** 編集中モデルの WindowList が、現在表示中シーンのウィンドウ集合と一致するか。 */
+  function sceneDataMatchesCurrentWindows(): boolean {
+    const windowList = editorState.sceneData?.WindowList;
+    if (!Array.isArray(windowList)) return false;
+    const configIds = new Set(
+      windowList
+        .filter((w): w is Record<string, unknown> => typeof w === 'object' && w !== null)
+        .map((w) => w.Id)
+        .filter((id): id is string => typeof id === 'string')
+    );
+    const liveIds = new Set(editorState.windows.map((w) => w.id));
+    if (configIds.size !== liveIds.size || configIds.size === 0) return false;
+    for (const id of configIds) {
+      if (!liveIds.has(id)) return false;
+    }
+    return true;
+  }
+
+  function loadSceneData(): void {
+    const windowIds = new Set(editorState.windows.map((w) => w.id));
+    if (windowIds.size === 0) return;
+    try {
+      const loaded = loadScmSceneForWindowIds(getPluginsFilePath(), windowIds);
+      if (loaded) {
+        applyLoadedScene(editorState, loaded.sceneKey, loaded.sceneData, loaded.mtimeMs);
+        panel?.setStatusMessage(`シーン "${loaded.sceneKey}" を plugins.js から読み込みました`);
+      } else {
+        panel?.setStatusMessage('plugins.js 内に対応するシーン定義が見つかりませんでした', true);
+      }
+    } catch (err) {
+      panel?.setStatusMessage(`読み込みエラー: ${(err as Error).message}`, true);
+    }
+  }
+
+  function handleSave(): void {
+    if (!editorState.sceneKey || !editorState.sceneData || editorState.loadedMtimeMs === null) return;
+    try {
+      const result = saveScmScene(
+        getPluginsFilePath(),
+        getBackupDir(),
+        editorState.sceneKey,
+        editorState.sceneData,
+        editorState.loadedMtimeMs
+      );
+      markSaved(editorState, result.mtimeMs);
+      panel?.setStatusMessage('plugins.js に保存しました（バックアップ作成済み）');
+    } catch (err) {
+      if (err instanceof PluginsFileConflictError) {
+        panel?.setStatusMessage(err.message, true);
+      } else {
+        panel?.setStatusMessage(`保存エラー: ${(err as Error).message}`, true);
+      }
+    }
+  }
+
+  function handleDiscard(): void {
+    loadSceneData();
+  }
+
+  function handleToggleGrid(enabled: boolean): void {
+    editorState.gridEnabled = enabled;
+  }
+
   function startInspector(): void {
-    if (!overlay) overlay = new InspectorOverlay(editorState, handleSelect);
+    if (!overlay) {
+      overlay = new InspectorOverlay(editorState, { onSelect: handleSelect, onDragCommit: handleDragCommit });
+    }
     if (!panel) {
-      panel = new InspectorPanel(editorState, handleSelect);
+      panel = new InspectorPanel(editorState, {
+        onSelect: handleSelect,
+        onSave: handleSave,
+        onDiscard: handleDiscard,
+        onToggleGrid: handleToggleGrid,
+      });
       document.body.appendChild(panel.el);
     }
     overlay.attach();
+    overlay.refresh();
+    if (!sceneDataMatchesCurrentWindows()) {
+      loadSceneData();
+    }
     const loop = (): void => {
       overlay?.refresh();
       panel?.render();
@@ -102,7 +230,7 @@ import { InspectorPanel } from './ui/panel';
     if (active) {
       overlayElement.style.display = 'block';
       if (isCustomSceneSafe()) {
-        overlayElement.textContent = `SCMDesigner (Phase 1) — ${startupKey} で終了`;
+        overlayElement.textContent = `SCMDesigner (Phase 2) — ${startupKey} で終了`;
         startInspector();
       } else {
         overlayElement.textContent = `SCMDesigner: カスタムメニューシーン表示中のみ利用できます（${startupKey} で終了）`;
