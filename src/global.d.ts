@@ -9,6 +9,8 @@ declare const Utils: {
 
 declare const PluginManagerEx: {
   createParameter(script: Document | HTMLScriptElement | null): Record<string, unknown>;
+  /** オブジェクトのコンストラクタ名を返す（PluginCommonBase提供のユーティリティ）。 */
+  findClassName(obj: unknown): string;
 };
 
 declare const Input: {
@@ -21,8 +23,16 @@ declare const TouchInput: {
 
 declare const SceneManager: {
   _scene: unknown;
-  isCustomScene(): boolean;
+  /**
+   * 引数必須: 現在のシーンが指定した識別子のカスタムシーンかどうかを返す
+   * （SceneCustomMenu.js実装: `this._scene.constructor === this._customScene[id]`）。
+   * 引数なしで呼ぶと常に false になるため注意。
+   */
+  isCustomScene(id: string): boolean;
 };
+
+/** SceneCustomMenu.js が window に公開する、カスタムメニューシーンの基底クラス。 */
+declare class Scene_CustomMenu {}
 
 // rmmz_core.js の Graphics（解像度取得・キャンバス座標変換のみ使用）。
 declare const Graphics: {

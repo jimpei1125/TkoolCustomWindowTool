@@ -11,7 +11,7 @@
 // Utils.isOptionValid('test') && Utils.isNwjs() ガードの内側で行う。
 
 import { getBackupDir, getPluginsFilePath } from './bridge/projectPath';
-import { loadScmSceneForWindowIds, PluginsFileConflictError, saveScmScene } from './bridge/pluginsFile';
+import { loadScmSceneForId, PluginsFileConflictError, saveScmScene } from './bridge/pluginsFile';
 import {
   applyLoadedScene,
   createEditorState,
@@ -41,12 +41,26 @@ import { InspectorPanel } from './ui/panel';
     }
   }
 
+  // SceneManager.isCustomScene(id) は「引数のシーンIDと現在のシーンが一致するか」を
+  // 判定する関数で、引数なしでは常に false を返す（実ソース確認済み）。
+  // 「現在がカスタムシーン一般かどうか」の判定には instanceof を使う。
   function isCustomSceneSafe(): boolean {
     try {
-      return typeof SceneManager.isCustomScene === 'function' && SceneManager.isCustomScene();
+      return SceneManager._scene instanceof Scene_CustomMenu;
     } catch {
       // SceneCustomMenu 未導入などプラグイン順序の問題があってもゲーム自体は落とさない
       return false;
+    }
+  }
+
+  /** 現在のシーンの識別子（SceneData.Id）を取得する。カスタムシーンでなければ null。 */
+  function getCurrentSceneId(): string | null {
+    try {
+      if (!(SceneManager._scene instanceof Scene_CustomMenu)) return null;
+      const id = PluginManagerEx.findClassName(SceneManager._scene);
+      return typeof id === 'string' && id !== '' ? id : null;
+    } catch {
+      return null;
     }
   }
 
@@ -122,34 +136,22 @@ import { InspectorPanel } from './ui/panel';
     markDirty(editorState);
   }
 
-  /** 編集中モデルの WindowList が、現在表示中シーンのウィンドウ集合と一致するか。 */
-  function sceneDataMatchesCurrentWindows(): boolean {
-    const windowList = editorState.sceneData?.WindowList;
-    if (!Array.isArray(windowList)) return false;
-    const configIds = new Set(
-      windowList
-        .filter((w): w is Record<string, unknown> => typeof w === 'object' && w !== null)
-        .map((w) => w.Id)
-        .filter((id): id is string => typeof id === 'string')
-    );
-    const liveIds = new Set(editorState.windows.map((w) => w.id));
-    if (configIds.size !== liveIds.size || configIds.size === 0) return false;
-    for (const id of configIds) {
-      if (!liveIds.has(id)) return false;
-    }
-    return true;
+  /** 編集中モデルが、現在表示中シーンの Id と一致するか。 */
+  function sceneDataMatchesCurrentScene(): boolean {
+    const currentId = getCurrentSceneId();
+    return currentId !== null && editorState.sceneData?.Id === currentId;
   }
 
   function loadSceneData(): void {
-    const windowIds = new Set(editorState.windows.map((w) => w.id));
-    if (windowIds.size === 0) return;
+    const sceneId = getCurrentSceneId();
+    if (!sceneId) return;
     try {
-      const loaded = loadScmSceneForWindowIds(getPluginsFilePath(), windowIds);
+      const loaded = loadScmSceneForId(getPluginsFilePath(), sceneId);
       if (loaded) {
         applyLoadedScene(editorState, loaded.sceneKey, loaded.sceneData, loaded.mtimeMs);
-        panel?.setStatusMessage(`シーン "${loaded.sceneKey}" を plugins.js から読み込みました`);
+        panel?.setStatusMessage(`シーン "${sceneId}" (${loaded.sceneKey}) を plugins.js から読み込みました`);
       } else {
-        panel?.setStatusMessage('plugins.js 内に対応するシーン定義が見つかりませんでした', true);
+        panel?.setStatusMessage(`plugins.js 内にシーン "${sceneId}" の定義が見つかりませんでした`, true);
       }
     } catch (err) {
       panel?.setStatusMessage(`読み込みエラー: ${(err as Error).message}`, true);
@@ -200,7 +202,7 @@ import { InspectorPanel } from './ui/panel';
     }
     overlay.attach();
     overlay.refresh();
-    if (!sceneDataMatchesCurrentWindows()) {
+    if (!sceneDataMatchesCurrentScene()) {
       loadSceneData();
     }
     const loop = (): void => {

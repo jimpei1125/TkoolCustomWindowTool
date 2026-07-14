@@ -85,14 +85,14 @@ function backup(filePath: string, backupDir: string): void {
 }
 
 /**
- * SceneCustomMenu の parameters から、指定した Id 集合とちょうど一致する
- * WindowList を持つ SceneData を探す。SceneCustomMenu.js の内部実装（シーンIDの
- * 保持方法）に依存せず、公開されているデータ構造のみで対象シーンを特定するための方式
- * （前回の実装計画で承認済み）。
+ * SceneCustomMenu の parameters から、指定した Id（SceneData.Id）と一致する
+ * シーンを探す。SceneCustomMenu.js 本体も `SceneManager.findSceneData` 内部で
+ * `data.Id === sceneId` により同じ方法でシーンを特定しているため
+ * （実ソース SceneManager.findSceneData 実装を確認済み）、これに倣う。
  */
-export function findMatchingSceneKey(
+export function findSceneKeyById(
   parameters: Record<string, string>,
-  windowIds: ReadonlySet<string>
+  sceneId: string
 ): { key: string; sceneData: Record<string, unknown> } | null {
   for (const [key, raw] of Object.entries(parameters)) {
     let parsed: Record<string, unknown> | '';
@@ -102,14 +102,7 @@ export function findMatchingSceneKey(
       continue;
     }
     if (parsed === '') continue;
-    const windowList = parsed.WindowList;
-    if (!Array.isArray(windowList)) continue;
-    const ids = windowList
-      .filter((w): w is Record<string, unknown> => typeof w === 'object' && w !== null)
-      .map((w) => w.Id)
-      .filter((id): id is string => typeof id === 'string');
-    if (ids.length !== windowIds.size) continue;
-    if (ids.every((id) => windowIds.has(id))) {
+    if (parsed.Id === sceneId) {
       return { key, sceneData: parsed };
     }
   }
@@ -122,15 +115,12 @@ export interface LoadedScmScene {
   mtimeMs: number;
 }
 
-/** 現在表示中シーンの WindowId 集合から、対応する SceneData を plugins.js から読み込む。 */
-export function loadScmSceneForWindowIds(
-  pluginsPath: string,
-  windowIds: ReadonlySet<string>
-): LoadedScmScene | null {
+/** 現在表示中シーンの Id から、対応する SceneData を plugins.js から読み込む。 */
+export function loadScmSceneForId(pluginsPath: string, sceneId: string): LoadedScmScene | null {
   const { plugins, mtimeMs } = readRaw(pluginsPath);
   const entry = plugins.find((p) => p.name === SCENE_CUSTOM_MENU_PLUGIN_NAME);
   if (!entry) return null;
-  const match = findMatchingSceneKey(entry.parameters, windowIds);
+  const match = findSceneKeyById(entry.parameters, sceneId);
   if (!match) return null;
   return { sceneKey: match.key, sceneData: match.sceneData, mtimeMs };
 }

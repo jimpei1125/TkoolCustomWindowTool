@@ -148,6 +148,11 @@ const FIELD_TYPES: Record<StructName, FieldTypeMap> = {
 function parseScalar(raw: string, kind: 'string' | 'number' | 'boolean'): unknown {
   if (kind === 'string') return raw;
   if (kind === 'boolean') return raw === 'true';
+  // SceneCustomMenu.js の一部フィールド（例: UseHelp）は過去 boolean だった名残で
+  // "true"/"false" のまま plugins.js に残っていることがある（実データで確認済み）。
+  // Number("true") は NaN になり保存時に壊れるため、number 型でも救済する。
+  if (raw === 'true') return 1;
+  if (raw === 'false') return 0;
   return Number(raw);
 }
 

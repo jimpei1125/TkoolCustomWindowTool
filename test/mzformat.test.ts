@@ -56,4 +56,26 @@ describe('mzformat parse/serialize', () => {
     expect(window2.RelativeWindowIdX).toBe('win_command');
     expect(window2.ItemDrawScript).toEqual(['drawText:所持金', 'drawGold']);
   });
+
+  it('number型フィールドのレガシー値 "true"/"false" を壊さず読める（実プラグインの旧UseHelp形式）', () => {
+    const raw = JSON.stringify({
+      Id: 'Scene_Legacy',
+      UseHelp: 'true',
+      HelpRows: '0',
+      InitialEvent: '',
+      ParallelEventId: '0',
+      ActorChangeEvent: '',
+      WindowList: '[]',
+      PicturePriority: '0',
+      Panorama: '',
+      UsePageButtons: 'false',
+      SnapNoFilter: 'false',
+    });
+    const parsed = parseStruct(raw, 'SceneData') as Record<string, unknown>;
+    expect(parsed.UseHelp).toBe(1);
+    expect(Number.isNaN(parsed.UseHelp)).toBe(false);
+
+    const serialized = serializeStruct(parsed, 'SceneData');
+    expect(JSON.parse(serialized).UseHelp).toBe('1');
+  });
 });
