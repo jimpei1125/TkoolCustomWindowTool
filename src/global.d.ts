@@ -53,10 +53,6 @@ interface PixiDisplayObject {
   destroy(options?: unknown): void;
 }
 
-interface PixiInteractionEvent {
-  data: { global: { x: number; y: number } };
-}
-
 interface PixiGraphics extends PixiDisplayObject {
   clear(): PixiGraphics;
   lineStyle(width: number, color: number, alpha?: number): PixiGraphics;
@@ -65,8 +61,6 @@ interface PixiGraphics extends PixiDisplayObject {
   drawRect(x: number, y: number, width: number, height: number): PixiGraphics;
   moveTo(x: number, y: number): PixiGraphics;
   lineTo(x: number, y: number): PixiGraphics;
-  interactive: boolean;
-  on(event: string, handler: (e: PixiInteractionEvent) => void): PixiGraphics;
 }
 
 interface PixiText extends PixiDisplayObject {

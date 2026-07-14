@@ -2,6 +2,14 @@
 // Phase 2 では選択枠クリックでの移動ドラッグ、8方向ハンドルでのリサイズ、
 // グリッド/端吸着とガイド線表示を追加する。
 //
+// 実装注意: 選択・ドラッグ開始の判定は PIXI の interactive / pointerdown に
+// 依存せず、window の 'mousedown' を直接受けて Graphics.pageToCanvasX/Y で
+// キャンバス座標に変換し、自前で矩形の当たり判定を行う方式にしている。
+// RPGツクールMZ は独自の TouchInput/Input で入力を扱っており、PIXI の
+// InteractionManager 経由のイベントが確実に発火するとは限らないため
+// （実機でクリックが反応しない不具合を確認）、ドラッグ中の追跡と同じ
+// 「DOM 生イベント + 自前の当たり判定」方式に統一した。
+//
 // ドラッグ中のプレビューは実ウィンドウ（Window.move）を直接書き換えて行う
 // （SPEC.md §8.1）。plugins.js への保存や RelativeWindowIdX/Y の計算は
 // main.ts 側（onDragCommit コールバック）が担当する。
@@ -34,6 +42,7 @@ const SELECTED_COLOR = 0xffcc00;
 const HANDLE_COLOR = 0xffffff;
 const GUIDE_COLOR = 0xff00ff;
 const HANDLE_SIZE = 8;
+const HANDLE_HIT_RADIUS = 8;
 
 const HANDLE_MODES: ReadonlyArray<{ mode: DragMode; dx: number; dy: number }> = [
   { mode: 'resize-nw', dx: 0, dy: 0 },
@@ -60,8 +69,9 @@ export class InspectorOverlay {
   private readonly handles = new Map<DragMode, PixiGraphics>();
   private attachedScene: CustomMenuSceneLike | null = null;
   private dragSession: DragSession | null = null;
-  private windowMoveHandler: ((e: MouseEvent) => void) | null = null;
-  private windowUpHandler: ((e: MouseEvent) => void) | null = null;
+  private readonly onMouseDown = (ev: MouseEvent): void => this.handleMouseDown(ev);
+  private readonly onMouseMove = (ev: MouseEvent): void => this.handlePointerMove(ev);
+  private readonly onMouseUp = (ev: MouseEvent): void => this.handlePointerUp(ev);
 
   constructor(
     private readonly state: EditorState,
@@ -75,10 +85,12 @@ export class InspectorOverlay {
     if (!scene) return;
     scene.addChild(this.container);
     this.attachedScene = scene;
+    window.addEventListener('mousedown', this.onMouseDown);
   }
 
   detach(): void {
     this.endDrag();
+    window.removeEventListener('mousedown', this.onMouseDown);
     this.attachedScene?.removeChild(this.container);
     this.attachedScene = null;
     for (const [id, frame] of this.frames) {
@@ -135,8 +147,6 @@ export class InspectorOverlay {
       let frame = this.frames.get(win.id);
       if (!frame) {
         frame = new PIXI.Graphics();
-        frame.interactive = true;
-        frame.on('pointerdown', (e) => this.handleFramePointerDown(win.id, e));
         this.container.addChild(frame);
         this.frames.set(win.id, frame);
       }
@@ -170,9 +180,6 @@ export class InspectorOverlay {
 
     for (const { mode, dx, dy } of HANDLE_MODES) {
       const handle = new PIXI.Graphics();
-      handle.interactive = true;
-      handle.on('pointerdown', (e) => this.handleHandlePointerDown(selected.id, mode, e));
-      handle.clear();
       handle.beginFill(HANDLE_COLOR, 1);
       handle.drawRect(-HANDLE_SIZE / 2, -HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
       handle.endFill();
@@ -191,17 +198,48 @@ export class InspectorOverlay {
     this.handles.clear();
   }
 
-  private handleFramePointerDown(id: string, e: PixiInteractionEvent): void {
-    this.callbacks.onSelect(id);
-    const win = this.state.windows.find((w) => w.id === id);
-    if (!win) return;
-    this.startDragSession(id, 'move', { x: e.data.global.x, y: e.data.global.y }, win);
+  /** 選択中ウィンドウのハンドルへの当たり判定。ヒットしたハンドルの DragMode を返す。 */
+  private hitTestHandle(win: InspectedWindow, pointer: { x: number; y: number }): DragMode | null {
+    for (const { mode, dx, dy } of HANDLE_MODES) {
+      const hx = win.x + win.width * dx;
+      const hy = win.y + win.height * dy;
+      if (Math.abs(pointer.x - hx) <= HANDLE_HIT_RADIUS && Math.abs(pointer.y - hy) <= HANDLE_HIT_RADIUS) {
+        return mode;
+      }
+    }
+    return null;
   }
 
-  private handleHandlePointerDown(id: string, mode: DragMode, e: PixiInteractionEvent): void {
-    const win = this.state.windows.find((w) => w.id === id);
-    if (!win) return;
-    this.startDragSession(id, mode, { x: e.data.global.x, y: e.data.global.y }, win);
+  private handleMouseDown(ev: MouseEvent): void {
+    if (this.dragSession) return;
+    const target = ev.target as HTMLElement | null;
+    // 自前の DOM オーバーレイ（右ドック等）の上でのクリックはゲーム側の判定に含めない
+    if (target?.closest('.scmd-panel') || target?.id === 'scmd-overlay') return;
+
+    const pointer = { x: Graphics.pageToCanvasX(ev.clientX), y: Graphics.pageToCanvasY(ev.clientY) };
+
+    const selected = this.state.windows.find((w) => w.id === this.state.selectedId);
+    if (selected) {
+      const mode = this.hitTestHandle(selected, pointer);
+      if (mode) {
+        this.startDragSession(selected.id, mode, pointer, selected);
+        return;
+      }
+    }
+
+    for (let i = this.state.windows.length - 1; i >= 0; i--) {
+      const win = this.state.windows[i]!;
+      if (
+        pointer.x >= win.x &&
+        pointer.x <= win.x + win.width &&
+        pointer.y >= win.y &&
+        pointer.y <= win.y + win.height
+      ) {
+        this.callbacks.onSelect(win.id);
+        this.startDragSession(win.id, 'move', pointer, win);
+        return;
+      }
+    }
   }
 
   private startDragSession(id: string, mode: DragMode, pointer: { x: number; y: number }, rect: Rect): void {
@@ -212,11 +250,8 @@ export class InspectorOverlay {
       height: rect.height,
     });
     this.clearHandles();
-
-    this.windowMoveHandler = (ev: MouseEvent) => this.handlePointerMove(ev);
-    this.windowUpHandler = (ev: MouseEvent) => this.handlePointerUp(ev);
-    window.addEventListener('mousemove', this.windowMoveHandler);
-    window.addEventListener('mouseup', this.windowUpHandler);
+    window.addEventListener('mousemove', this.onMouseMove);
+    window.addEventListener('mouseup', this.onMouseUp);
   }
 
   private buildSnapContext(excludeId: string): SnapContext {
@@ -252,10 +287,8 @@ export class InspectorOverlay {
   }
 
   private endDrag(): void {
-    if (this.windowMoveHandler) window.removeEventListener('mousemove', this.windowMoveHandler);
-    if (this.windowUpHandler) window.removeEventListener('mouseup', this.windowUpHandler);
-    this.windowMoveHandler = null;
-    this.windowUpHandler = null;
+    window.removeEventListener('mousemove', this.onMouseMove);
+    window.removeEventListener('mouseup', this.onMouseUp);
     this.dragSession = null;
     this.guideLayer.clear();
   }
