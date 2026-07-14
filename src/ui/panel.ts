@@ -1,15 +1,16 @@
 // 右ドックパネル（SPEC.md §4.2 ui/panel.ts）。
 // Phase 1: ウィンドウツリー + 読み取り専用プロパティ表示
-// Phase 2: 保存 / 破棄 / グリッド切替の簡易ツールバーとステータス表示を追加
-// 3タブ構成のプロパティパネル（配置/中身/動作）は Phase 3〜5 で拡張する。
+// Phase 2: 保存 / 破棄 / グリッド切替の簡易ツールバーとステータス表示
+// Phase 3: 構造編集（テンプレ追加/削除/複製/並べ替え/リネーム）+
+//          配置タブ・動作タブの編集フォーム（中身タブは Phase 4）
 
 import type { EditorState } from '../editor/state';
 import { getSelectedWindow } from '../editor/state';
-import { WindowTree } from './tree';
+import { WindowTree, type WindowTreeCallbacks } from './tree';
+import { PropertyForm, type PropertyFormCallbacks } from './propertyForm';
 import { injectStyles } from './styles';
 
-export interface PanelCallbacks {
-  onSelect(id: string): void;
+export interface PanelCallbacks extends WindowTreeCallbacks, PropertyFormCallbacks {
   onSave(): void;
   onDiscard(): void;
   onToggleGrid(enabled: boolean): void;
@@ -18,7 +19,8 @@ export interface PanelCallbacks {
 export class InspectorPanel {
   readonly el: HTMLDivElement;
   private readonly tree: WindowTree;
-  private readonly propsEl: HTMLDivElement;
+  private readonly propertyForm: PropertyForm;
+  private readonly liveInfoEl: HTMLDivElement;
   private readonly statusEl: HTMLDivElement;
   private readonly saveButton: HTMLButtonElement;
   private readonly discardButton: HTMLButtonElement;
@@ -65,18 +67,22 @@ export class InspectorPanel {
 
     this.el.appendChild(this.createTitle('SCMDesigner - ウィンドウ一覧'));
 
-    this.tree = new WindowTree(state, (id) => this.callbacks.onSelect(id));
+    this.tree = new WindowTree(state, this.callbacks);
     this.el.appendChild(this.tree.el);
 
-    this.el.appendChild(this.createTitle('プロパティ（読み取り専用）'));
-    this.propsEl = document.createElement('div');
-    this.propsEl.className = 'scmd-props';
-    this.el.appendChild(this.propsEl);
+    this.el.appendChild(this.createTitle('実座標（参考・読み取り専用）'));
+    this.liveInfoEl = document.createElement('div');
+    this.el.appendChild(this.liveInfoEl);
+
+    this.el.appendChild(this.createTitle('プロパティ'));
+    this.propertyForm = new PropertyForm(state, this.callbacks);
+    this.el.appendChild(this.propertyForm.el);
   }
 
   render(): void {
     this.tree.render();
-    this.renderProps();
+    this.renderLiveInfo();
+    this.propertyForm.render();
     this.renderToolbarState();
   }
 
@@ -99,24 +105,22 @@ export class InspectorPanel {
     this.discardButton.disabled = !this.state.dirty;
   }
 
-  private renderProps(): void {
-    this.propsEl.innerHTML = '';
+  private renderLiveInfo(): void {
+    this.liveInfoEl.innerHTML = '';
     const selected = getSelectedWindow(this.state);
     if (!selected) {
       const empty = document.createElement('div');
       empty.className = 'scmd-empty';
-      empty.textContent = 'ウィンドウを選択してください';
-      this.propsEl.appendChild(empty);
+      empty.textContent = '（ゲーム内に未反映、または未選択）';
+      this.liveInfoEl.appendChild(empty);
       return;
     }
     const rows: Array<[string, string]> = [
-      ['Id', selected.id],
       ['x', String(selected.x)],
       ['y', String(selected.y)],
       ['width', String(selected.width)],
       ['height', String(selected.height)],
       ['visible', String(selected.visible)],
-      ['active', String(selected.active)],
     ];
     for (const [key, value] of rows) {
       const row = document.createElement('div');
@@ -128,7 +132,7 @@ export class InspectorPanel {
       v.className = 'scmd-prop-value';
       v.textContent = value;
       row.append(k, v);
-      this.propsEl.appendChild(row);
+      this.liveInfoEl.appendChild(row);
     }
   }
 }

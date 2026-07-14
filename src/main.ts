@@ -10,19 +10,27 @@
 // CLAUDE.md「絶対に守るルール」6: すべての初期化は
 // Utils.isOptionValid('test') && Utils.isNwjs() ガードの内側で行う。
 
-import { getBackupDir, getPluginsFilePath } from './bridge/projectPath';
+import { getBackupDir, getPluginsFilePath, listImgSystemFiles } from './bridge/projectPath';
 import { loadScmSceneForId, PluginsFileConflictError, saveScmScene } from './bridge/pluginsFile';
 import {
+  addWindow,
   applyLoadedScene,
   createEditorState,
+  duplicateWindow,
   getWindowConfig,
+  isWindowIdTaken,
   markDirty,
   markSaved,
+  moveWindow,
+  removeWindow,
+  renameWindow,
   selectWindow,
 } from './editor/state';
+import { findTemplate } from './editor/templates';
 import { InspectorOverlay } from './gizmo/overlay';
 import type { ResolvedRect } from './model/placement';
 import { computeStoredPlacement } from './model/placement';
+import { findScriptReferences } from './model/validate';
 import { InspectorPanel } from './ui/panel';
 
 (() => {
@@ -187,6 +195,85 @@ import { InspectorPanel } from './ui/panel';
     editorState.gridEnabled = enabled;
   }
 
+  // --- Phase 3: 構造編集 ---
+
+  function handleAddTemplate(templateKey: string, newId: string): void {
+    const template = findTemplate(templateKey);
+    if (!template) return;
+    if (isWindowIdTaken(editorState, newId)) {
+      panel?.setStatusMessage(`Id "${newId}" は既に使われています`, true);
+      return;
+    }
+    addWindow(editorState, template.build(newId));
+    panel?.setStatusMessage(
+      `"${template.name}" テンプレートから "${newId}" を追加しました（保存→ゲーム再起動で反映されます）`
+    );
+  }
+
+  function handleDeleteWindow(id: string): void {
+    removeWindow(editorState, id);
+    panel?.setStatusMessage(`ウィンドウ "${id}" を削除しました`);
+  }
+
+  function handleDuplicateWindow(id: string): void {
+    let newId = `${id}_copy`;
+    let suffix = 2;
+    while (isWindowIdTaken(editorState, newId)) {
+      newId = `${id}_copy${suffix}`;
+      suffix += 1;
+    }
+    duplicateWindow(editorState, id, newId);
+    panel?.setStatusMessage(`ウィンドウ "${id}" を "${newId}" として複製しました`);
+  }
+
+  function handleMoveWindow(id: string, direction: 'up' | 'down'): void {
+    moveWindow(editorState, id, direction);
+  }
+
+  function handleRenameWindow(oldId: string, newId: string): void {
+    if (isWindowIdTaken(editorState, newId)) {
+      panel?.setStatusMessage(`Id "${newId}" は既に使われています`, true);
+      return;
+    }
+    const references = editorState.sceneData ? findScriptReferences(editorState.sceneData, oldId) : [];
+    renameWindow(editorState, oldId, newId);
+    if (references.length > 0) {
+      panel?.setStatusMessage(
+        `"${oldId}"→"${newId}" にリネームしました。スクリプト内の直書き参照は自動更新されません: ${references.join(', ')}`,
+        true
+      );
+    } else {
+      panel?.setStatusMessage(`"${oldId}" を "${newId}" にリネームしました`);
+    }
+  }
+
+  /** field は WindowData 直下のキー、または "EventField.SubKey" のドット区切りパス。 */
+  function handleFieldChange(id: string, field: string, value: unknown): void {
+    const config = getWindowConfig(editorState, id);
+    if (!config) return;
+    const parts = field.split('.');
+    if (parts.length === 1) {
+      config[field] = value;
+    } else {
+      const [eventField, subField] = parts as [string, string];
+      let event = config[eventField];
+      if (typeof event !== 'object' || event === null) {
+        event = { CommandId: 0, FocusWindowId: '', FocusWindowIndex: -1, Script: '', SwitchId: 0, Deselect: false };
+        config[eventField] = event;
+      }
+      (event as Record<string, unknown>)[subField] = value;
+    }
+    markDirty(editorState);
+  }
+
+  function handleListWindowSkins(): string[] {
+    try {
+      return listImgSystemFiles();
+    } catch {
+      return [];
+    }
+  }
+
   function startInspector(): void {
     if (!overlay) {
       overlay = new InspectorOverlay(editorState, { onSelect: handleSelect, onDragCommit: handleDragCommit });
@@ -197,6 +284,13 @@ import { InspectorPanel } from './ui/panel';
         onSave: handleSave,
         onDiscard: handleDiscard,
         onToggleGrid: handleToggleGrid,
+        onDelete: handleDeleteWindow,
+        onDuplicate: handleDuplicateWindow,
+        onMove: handleMoveWindow,
+        onRename: handleRenameWindow,
+        onAddTemplate: handleAddTemplate,
+        onFieldChange: handleFieldChange,
+        listWindowSkins: handleListWindowSkins,
       });
       document.body.appendChild(panel.el);
     }
