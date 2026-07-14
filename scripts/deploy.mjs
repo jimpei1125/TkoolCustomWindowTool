@@ -15,9 +15,14 @@ if (!existsSync(configPath)) {
   process.exit(1);
 }
 
+// PowerShell の `Set-Content -Encoding utf8` 等が付与する UTF-8 BOM を許容する。
+function stripBom(text) {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
 let config;
 try {
-  config = JSON.parse(readFileSync(configPath, 'utf-8'));
+  config = JSON.parse(stripBom(readFileSync(configPath, 'utf-8')));
 } catch (err) {
   console.error(
     `scmd.local.json の JSON 構文が不正です: ${err.message}\n` +
